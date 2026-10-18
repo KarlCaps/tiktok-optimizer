@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TikTok Optimizer</title>
+<meta name="description" content="Re-encode your video in the browser to a clean, high-bitrate MP4 before uploading to TikTok. Files never leave your device.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f2f4f6;
+  --surface: #ffffff;
+  --ink: #15212b;
+  --muted: #5b6b78;
+  --line: #d5dce2;
+  --accent: #0b5fff;
+  --accent-ink: #ffffff;
+  --ok: #0a7d4f;
+  --warn: #9a5b00;
+  --err: #b3261e;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f161c;
+    --surface: #17212a;
+    --ink: #e8eef3;
+    --muted: #93a3b0;
+    --line: #2b3945;
+    --accent: #5b9bff;
+    --accent-ink: #07131f;
+    --ok: #4cc38a;
+    --warn: #e3a64a;
+    --err: #ff8a80;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--bg);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: max(24px, env(safe-area-inset-top)) 20px max(40px, env(safe-area-inset-bottom));
+}
+main { max-width: 720px; margin: 0 auto; }
+h1 {
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
+  font-weight: 800;
+  font-size: clamp(2.4rem, 8vw, 4rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  margin: 40px 0 14px;
+}
+.lede { color: var(--muted); max-width: 56ch; margin: 0 0 28px; }
+
+.drop {
+  display: block;
+  border: 2px dashed var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 36px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.drop:hover, .drop.over { border-color: var(--accent); }
+.drop:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.drop strong { display: block; font-size: 1.1rem; }
+.drop span { color: var(--muted); font-size: .92rem; }
+.drop input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+
+.panel {
+  margin-top: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+}
+.hidden { display: none !important; }
+
+.spec { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.spec > div { padding: 14px 16px; }
+.spec > div + div { border-left: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.spec h2 { margin: 0 0 8px; font-size: .95rem; font-weight: 600; color: var(--muted); }
+.spec dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-variant-numeric: tabular-nums; }
+.spec dt { color: var(--muted); }
+.spec dd { margin: 0; text-align: right; font-weight: 600; }
+.filename { margin: 0 0 14px; font-weight: 600; overflow-wrap: anywhere; }
+
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin: 18px 0 4px; }
+label.field { display: grid; gap: 6px; font-size: .9rem; color: var(--muted); }
+select, input[type="number"] {
+  font: inherit; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; width: 100%;
+}
+select:focus-visible, input:focus-visible, button:focus-visible, a.btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.notes { margin: 14px 0 0; padding: 0; list-style: none; font-size: .92rem; }
+.notes li { margin-top: 6px; }
+.notes .warn { color: var(--warn); }
+.notes .err { color: var(--err); }
+
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+button, a.btn {
+  font: inherit; font-weight: 600; cursor: pointer; text-decoration: none;
+  border-radius: 10px; padding: 11px 20px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); display: inline-block;
+}
+button.primary, a.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+progress { width: 100%; height: 10px; accent-color: var(--accent); }
+.status { margin: 10px 0 0; color: var(--muted); font-size: .92rem; min-height: 1.4em; }
+.result video { width: 100%; max-height: 420px; border-radius: 10px; background: #000; margin-top: 14px; }
+
+.how { margin-top: 36px; color: var(--muted); font-size: .95rem; }
+.how h2 { color: var(--ink); font-size: 1.05rem; margin: 0 0 8px; }
+.how ul { padding-left: 20px; margin: 0; }
+.how li { margin-top: 6px; }
+footer { margin-top: 32px; font-size: .88rem; color: var(--muted); }
+footer a { color: var(--accent); }
+@media (max-width: 520px) {
+  .spec { grid-template-columns: 1fr; }
+  .spec > div + div { border-left: 0; border-top: 1px solid var(--line); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>TikTok Optimizer</h1>
+  <p class="lede">Re-encode your video into a clean, high-bitrate MP4 so TikTok starts from the best possible source. Everything runs in your browser, and your file never leaves your device.</p>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept="video/mp4,video/quicktime,video/*">
+    <strong>Choose a video or drop it here</strong>
+    <span>MP4 or MOV. Best for clips up to a few hundred MB.</span>
+  </label>
+
+  <section class="panel hidden" id="setup" aria-label="Settings">
+    <p class="filename" id="fname"></p>
+    <div class="spec">
+      <div>
+        <h2>Your video</h2>
+        <dl>
+          <dt>Resolution</dt><dd id="srcRes">-</dd>
+          <dt>Length</dt><dd id="srcDur">-</dd>
+          <dt>Size</dt><dd id="srcSize">-</dd>
+        </dl>
+      </div>
+      <div>
+        <h2>After optimizing</h2>
+        <dl>
+          <dt>Resolution</dt><dd id="outRes">-</dd>
+          <dt>Bitrate</dt><dd id="outBr">-</dd>
+          <dt>Estimated size</dt><dd id="outSize">-</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="controls">
+      <label class="field">Resolution limit
+        <select id="preset">
+          <option value="1080p" selected>1080p</option>
+          <option value="4k">4K</option>
+          <option value="source">Keep original</option>
+        </select>
+      </label>
+      <label class="field">Bitrate (Mbps)
+        <input type="number" id="bitrate" min="2" max="80" step="1" value="15">
+      </label>
+      <label class="field">Frame rate
+        <select id="fps">
+          <option value="" selected>Keep original</option>
+          <option value="30">30 fps</option>
+          <option value="60">60 fps</option>
+        </select>
+      </label>
+      <label class="field">Encoding speed
+        <select id="speed">
+          <option value="ultrafast">Fastest</option>
+          <option value="veryfast" selected>Fast</option>
+          <option value="fast">Balanced</option>
+          <option value="medium">Best quality</option>
+        </select>
+      </label>
+    </div>
+
+    <ul class="notes" id="notes"></ul>
+
+    <div class="actions">
+      <button class="primary" id="go">Optimize video</button>
+      <button id="cancel" class="hidden">Cancel</button>
+      <button id="reset">Choose another video</button>
+    </div>
+
+    <div id="progressWrap" class="hidden">
+      <progress id="bar" max="100" value="0" aria-label="Encoding progress"></progress>
+    </div>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="panel result hidden" id="result" aria-label="Result">
+    <p class="filename" id="outName"></p>
+    <p id="outInfo" class="status"></p>
+    <video id="preview" controls playsinline></video>
+    <div class="actions">
+      <a class="btn primary" id="download" download>Download optimized video</a>
+    </div>
+  </section>
+
+  <section class="how">
+    <h2>Uploading to TikTok</h2>
+    <ul>
+      <li>Use TikTok on the web and turn on Upload HD.</li>
+      <li>Set visibility to Everyone.</li>
+      <li>Don’t edit the video in TikTok afterward. Sounds, filters and trimming trigger another re-encode.</li>
+      <li>TikTok still compresses every upload. This tool gives it a better source, so the result looks cleaner.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Runs <a href="https://ffmpegwasm.netlify.app/">ffmpeg.wasm</a> locally. For large or 4K files, use the faster
+    <a href="https://github.com/KarlCaps/tiktok-optimizer">Python version</a>.
+    Not affiliated with TikTok.
+  </footer>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const PRESETS = {
+    '1080p': { long: 1920, short: 1080, bitrate: 15 },
+    '4k':    { long: 3840, short: 2160, bitrate: 40 },
+    'source': { long: null, short: null, bitrate: 20 }
+  };
+  const PKG  = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+  const CORE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+
+  let file = null, meta = null, ffmpeg = null, loaded = false, busy = false, canceled = false, resultUrl = null, lastLog = '';
+
+  const fmtMB = (b) => (b / 1048576).toFixed(b > 1e9 ? 0 : 1) + ' MB';
+  const fmtTime = (s) => { s = Math.round(s); const m = Math.floor(s / 60); return m + ':' + String(s % 60).padStart(2, '0'); };
+
+  // Work out the output dimensions: downscale only, always even numbers.
+  function outputSize() {
+    const p = PRESETS[$('preset').value];
+    let w = meta.w, h = meta.h, scaled = false;
+    if (p.long) {
+      const portrait = h > w;
+      const maxW = portrait ? p.short : p.long;
+      const maxH = portrait ? p.long : p.short;
+      if (w > maxW || h > maxH) {
+        const r = Math.min(maxW / w, maxH / h);
+        w = Math.floor(w * r / 2) * 2;
+        h = Math.floor(h * r / 2) * 2;
+        scaled = true;
+      }
+    }
+    return { w: w - (w % 2), h: h - (h % 2), scaled, maxW: p.long ? (h > w ? p.short : p.long) : null, maxH: p.long ? (h > w ? p.long : p.short) : null };
+  }
+
+  function refresh() {
+    if (!meta) return;
+    const o = outputSize();
+    const br = parseFloat($('bitrate').value) || 0;
+    const estMB = (br + 0.32) * 1e6 * meta.dur / 8 / 1048576;
+    $('srcRes').textContent = meta.w + ' × ' + meta.h;
+    $('srcDur').textContent = fmtTime(meta.dur);
+    $('srcSize').textContent = fmtMB(file.size);
+    $('outRes').textContent = o.w + ' × ' + o.h;
+    $('outBr').textContent = br + ' Mbps';
+    $('outSize').textContent = '≈ ' + fmtMB(estMB * 1048576);
+
+    const notes = [];
+    const add = (cls, t) => notes.push('<li class="' + cls + '">' + t + '</li>');
+    if (file.size > 1.2e9) add('err', 'This file is over 1 GB. The browser will likely run out of memory. Use the Python version instead.');
+    else if (file.size > 400e6) add('warn', 'Large file. It may be slow or fail on phones and low-memory computers.');
+    if (estMB * 1048576 > file.size * 1.1) add('warn', 'The output will be larger than your original. Lower the bitrate if the file is already high quality.');
+    if ($('preset').value === '4k') add('warn', '4K encoding in the browser is very slow.');
+    $('notes').innerHTML = notes.join('');
+    $('go').disabled = busy || file.size > 1.2e9;
+  }
+
+  function readMeta(f) {
+    return new Promise((resolve, reject) => {
+      const v = document.createElement('video');
+      const url = URL.createObjectURL(f);
+      v.preload = 'metadata';
+      v.onloadedmetadata = () => {
+        resolve({ w: v.videoWidth, h: v.videoHeight, dur: v.duration });
+        URL.revokeObjectURL(url);
+      };
+      v.onerror = () => { URL.revokeObjectURL(url); reject(new Error('unreadable')); };
+      v.src = url;
+    });
+  }
+
+  async function pick(f) {
+    if (!f) return;
+    $('status').textContent = '';
+    try {
+      meta = await readMeta(f);
+    } catch (e) {
+      alert('Your browser could not read this video. Try an MP4 with H.264 video.');
+      return;
+    }
+    file = f;
+    if (resultUrl) { URL.revokeObjectURL(resultUrl); resultUrl = null; }
+    $('result').classList.add('hidden');
+    $('fname').textContent = f.name;
+    $('setup').classList.remove('hidden');
+    $('drop').classList.add('hidden');
+    $('bitrate').value = PRESETS[$('preset').value].bitrate;
+    refresh();
+  }
+
+  async function loadEngine() {
+    if (loaded) return;
+    const { FFmpeg } = FFmpegWASM;
+    const { toBlobURL } = FFmpegUtil;
+    ffmpeg = new FFmpeg();
+    ffmpeg.on('log', ({ message }) => { lastLog = message; });
+    ffmpeg.on('progress', ({ progress }) => {
+      const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+      $('bar').value = pct;
+      $('status').textContent = 'Encoding… ' + pct + '%';
+    });
+    $('status').textContent = 'Loading the encoder (about 30 MB, cached after the first time)…';
+    await ffmpeg.load({
+      classWorkerURL: await toBlobURL(PKG + '/814.ffmpeg.js', 'text/javascript'),
+      coreURL: await toBlobURL(CORE + '/ffmpeg-core.js', 'text/javascript'),
+      wasmURL: await toBlobURL(CORE + '/ffmpeg-core.wasm', 'application/wasm')
+    });
+    loaded = true;
+  }
+
+  async function run() {
+    busy = true;
+    canceled = false;
+    $('go').disabled = true;
+    $('cancel').classList.remove('hidden');
+    $('reset').classList.add('hidden');
+    $('progressWrap').classList.remove('hidden');
+    $('bar').removeAttribute('value');
+    ['preset', 'bitrate', 'fps', 'speed'].forEach((id) => ($(id).disabled = true));
+
+    const ext = (file.name.split('.').pop() || 'mp4').toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp4';
+    const inName = 'input.' + ext;
+    const outName = 'output.mp4';
+
+    try {
+      await loadEngine();
+      $('bar').value = 0;
+      $('status').textContent = 'Reading your video…';
+      await ffmpeg.writeFile(inName, await FFmpegUtil.fetchFile(file));
+
+      const o = outputSize();
+      const br = parseFloat($('bitrate').value) || 15;
+      const fps = $('fps').value;
+      const args = [
+        '-i', inName,
+        '-c:v', 'libx264', '-profile:v', 'high', '-preset', $('speed').value,
+        '-b:v', br + 'M', '-maxrate', (br * 1.5).toFixed(1) + 'M', '-bufsize', (br * 2) + 'M',
+        '-pix_fmt', 'yuv420p'
+      ];
+      if (fps) args.push('-r', fps);
+      args.push('-vf', 'scale=' + o.w + ':' + o.h + ':flags=lanczos');
+      args.push('-c:a', 'aac', '-b:a', '320k', '-ar', '48000', '-movflags', '+faststart', outName);
+
+      const code = await ffmpeg.exec(args);
+      if (code !== 0) throw new Error('Encoder exited with code ' + code + '. ' + lastLog);
+
+      const data = await ffmpeg.readFile(outName);
+      const blob = new Blob([data.buffer], { type: 'video/mp4' });
+      resultUrl = URL.createObjectURL(blob);
+      const base = file.name.replace(/\.[^.]+$/, '');
+      $('outName').textContent = base + '_tiktok.mp4';
+      $('outInfo').textContent = o.w + ' × ' + o.h + ', ' + br + ' Mbps, ' + fmtMB(blob.size);
+      $('preview').src = resultUrl;
+      $('download').href = resultUrl;
+      $('download').download = base + '_tiktok.mp4';
+      $('result').classList.remove('hidden');
+      $('status').textContent = 'Done.';
+      $('result').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      try { await ffmpeg.deleteFile(inName); await ffmpeg.deleteFile(outName); } catch (e) {}
+    } catch (err) {
+      if (canceled) {
+        $('status').textContent = 'Canceled.';
+      } else {
+        console.error(err);
+        $('status').textContent = 'Something went wrong: ' + (err && err.message ? err.message : err) +
+          ' Try a smaller file or a lower resolution, or use the Python version.';
+      }
+    } finally {
+      busy = false;
+      $('cancel').classList.add('hidden');
+      $('reset').classList.remove('hidden');
+      $('progressWrap').classList.add('hidden');
+      ['preset', 'bitrate', 'fps', 'speed'].forEach((id) => ($(id).disabled = false));
+      refresh();
+    }
+  }
+
+  function cancel() {
+    canceled = true;
+    if (ffmpeg) { try { ffmpeg.terminate(); } catch (e) {} }
+    loaded = false; // the engine reloads on the next run
+    busy = false;
+    $('status').textContent = 'Canceled.';
+    $('cancel').classList.add('hidden');
+    $('reset').classList.remove('hidden');
+    $('progressWrap').classList.add('hidden');
+    ['preset', 'bitrate', 'fps', 'speed'].forEach((id) => ($(id).disabled = false));
+    refresh();
+  }
+
+  function reset() {
+    file = null; meta = null;
+    $('file').value = '';
+    $('setup').classList.add('hidden');
+    $('result').classList.add('hidden');
+    $('drop').classList.remove('hidden');
+    $('status').textContent = '';
+  }
+
+  $('file').addEventListener('change', (e) => pick(e.target.files[0]));
+  ['dragover', 'dragenter'].forEach((t) => $('drop').addEventListener(t, (e) => { e.preventDefault(); $('drop').classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((t) => $('drop').addEventListener(t, (e) => { e.preventDefault(); $('drop').classList.remove('over'); }));
+  $('drop').addEventListener('drop', (e) => pick(e.dataTransfer.files[0]));
+  $('preset').addEventListener('change', () => { $('bitrate').value = PRESETS[$('preset').value].bitrate; refresh(); });
+  $('bitrate').addEventListener('input', refresh);
+  $('go').addEventListener('click', run);
+  $('cancel').addEventListener('click', cancel);
+  $('reset').addEventListener('click', reset);
+})();
+</script>
+</body>
+</html>

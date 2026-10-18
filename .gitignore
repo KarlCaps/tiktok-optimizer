@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Videos (never commit media files)
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

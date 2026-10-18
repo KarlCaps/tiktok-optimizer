@@ -241,7 +241,10 @@ footer a { color: var(--accent); }
     'source': { long: null, short: null, bitrate: 20 }
   };
   const PKG  = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
-  const CORE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+  const CORE_BASES = [
+    'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm',
+    'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd'
+  ];
 
   let file = null, meta = null, ffmpeg = null, loaded = false, busy = false, canceled = false, resultUrl = null, lastLog = '';
 
@@ -333,12 +336,31 @@ footer a { color: var(--accent); }
       $('status').textContent = 'Encoding… ' + pct + '%';
     });
     $('status').textContent = 'Loading the encoder (about 30 MB, cached after the first time)…';
-    await ffmpeg.load({
-      classWorkerURL: await toBlobURL(PKG + '/814.ffmpeg.js', 'text/javascript'),
-      coreURL: await toBlobURL(CORE + '/ffmpeg-core.js', 'text/javascript'),
-      wasmURL: await toBlobURL(CORE + '/ffmpeg-core.wasm', 'application/wasm')
-    });
-    loaded = true;
+    const classWorkerURL = await toBlobURL(PKG + '/814.ffmpeg.js', 'text/javascript');
+    let lastErr;
+    for (const base of CORE_BASES) {
+      try {
+        await ffmpeg.load({
+          classWorkerURL,
+          coreURL: await toBlobURL(base + '/ffmpeg-core.js', 'text/javascript'),
+          wasmURL: await toBlobURL(base + '/ffmpeg-core.wasm', 'application/wasm')
+        });
+        loaded = true;
+        return;
+      } catch (e) {
+        lastErr = e;
+        console.warn('Engine load failed for ' + base, e);
+        try { ffmpeg.terminate(); } catch (_) {}
+        ffmpeg = new FFmpeg();
+        ffmpeg.on('log', ({ message }) => { lastLog = message; });
+        ffmpeg.on('progress', ({ progress }) => {
+          const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+          $('bar').value = pct;
+          $('status').textContent = 'Encoding… ' + pct + '%';
+        });
+      }
+    }
+    throw lastErr;
   }
 
   async function run() {

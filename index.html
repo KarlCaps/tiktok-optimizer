@@ -173,7 +173,7 @@ footer a { color: var(--accent); }
       </label>
       <label class="field">Audio (copy mode)
         <select id="audio">
-          <option value="keep" selected>Keep, slowed to match</option>
+          <option value="keep" selected>Keep (timing stretched)</option>
           <option value="drop">Remove</option>
         </select>
       </label>
@@ -418,8 +418,8 @@ footer a { color: var(--accent); }
       const fps = $('fps').value;
       let args;
       if (copy) {
-        args = ['-itsscale:v', '2', '-i', inPath, '-map', '0:v:0', '-c:v', 'copy', '-tag:v', 'avc1'];
-        if ($('audio').value === 'keep') args.push('-map', '0:a:0?', '-c:a', 'aac', '-b:a', '320k', '-filter:a', 'atempo=0.5');
+        args = ['-itsscale:v', '2', '-itsscale:a', '2', '-i', inPath, '-map', '0:v:0', '-c:v', 'copy', '-tag:v', 'avc1'];
+        if ($('audio').value === 'keep') args.push('-map', '0:a:0?', '-c:a', 'copy');
         else args.push('-an');
         args.push('-movflags', '+faststart', outName);
       } else {

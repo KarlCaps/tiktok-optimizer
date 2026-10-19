@@ -10,7 +10,7 @@ It runs **locally on your computer**. No accounts, no uploads to third-party ser
 
 ## Two modes
 
-- **Retime (default for H.264 files):** copies your video stream untouched and only rewrites its timestamps (2x length, half the frame rate label). No re-encoding, so there is zero quality loss and it finishes in seconds. Audio is slowed to match, or removed with `--audio drop`.
+- **Retime (default for H.264 files):** copies your video stream untouched and only rewrites its timestamps (2x length, half the frame rate label). No re-encoding, so there is zero quality loss and it finishes in seconds. Audio is also copied, with its timestamps stretched the same way (or removed with `--audio drop`). Two optional experimental layers, based on analysing a similar tool's output, can be added with `--decoy` (second audio track padded with filler samples), `--unknown-duration` (movie header duration set to unknown), or `--full` for both.
 - **Re-encode:** a clean high-bitrate H.264/HEVC MP4, used automatically for non-H.264 sources (such as HEVC) or with `--mode reencode`.
 
 > **Experimental:** retime mode is based on analysing how a similar service changes files. Post a short test first to confirm TikTok handles it the way you expect. TikTok re-encodes every upload either way.
@@ -49,7 +49,8 @@ Output is saved next to the original as `<name>_tiktok.mp4`.
 | --- | --- |
 | `--mode` | `auto` (default), `retime`, or `reencode` |
 | `--stretch` | Retime: length multiplier (default 2) |
-| `--audio` | Retime: `keep` (slowed to match, default) or `drop` |
+| `--audio` | Retime: `keep` (default) or `drop` |
+| `--decoy` / `--unknown-duration` / `--full` | Retime: experimental layers 2 and 3 |
 | `--preset` | `1080p` (default), `4k`, or `source` (keep original resolution) |
 | `--fps` | Force output fps (default: keep source, capped at 60 for 1080p/4k) |
 | `--bitrate` | Video bitrate in Mbps (default: 15 for 1080p, 40 for 4k, 25 for source) |

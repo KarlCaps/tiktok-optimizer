@@ -97,6 +97,7 @@ select, input[type="number"] {
   font: inherit; color: var(--ink); background: var(--bg);
   border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; width: 100%;
 }
+select:disabled, input:disabled { opacity: .5; }
 select:focus-visible, input:focus-visible, button:focus-visible, a.btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
 .notes { margin: 14px 0 0; padding: 0; list-style: none; font-size: .92rem; }
@@ -133,7 +134,7 @@ footer a { color: var(--accent); }
 <body>
 <main>
   <h1>TikTok Optimizer</h1>
-  <p class="lede">Re-encode your video into a clean, high-bitrate MP4 so TikTok starts from the best possible source. Everything runs in your browser, and your file never leaves your device.</p>
+  <p class="lede">Prepare your video for TikTok in your browser. The default mode copies your video untouched and only changes its timing, so nothing gets re-compressed. Your file never leaves your device.</p>
 
   <label class="drop" id="drop">
     <input type="file" id="file" accept="video/mp4,video/quicktime,video/*">
@@ -158,11 +159,24 @@ footer a { color: var(--accent); }
           <dt>Resolution</dt><dd id="outRes">-</dd>
           <dt>Bitrate</dt><dd id="outBr">-</dd>
           <dt>Estimated size</dt><dd id="outSize">-</dd>
+          <dt>Length</dt><dd id="outDur">-</dd>
         </dl>
       </div>
     </div>
 
     <div class="controls">
+      <label class="field">Method
+        <select id="method">
+          <option value="copy" selected>Fast copy, no re-encode</option>
+          <option value="encode">Re-encode (H.265 or oversized files)</option>
+        </select>
+      </label>
+      <label class="field">Audio (copy mode)
+        <select id="audio">
+          <option value="keep" selected>Keep, slowed to match</option>
+          <option value="drop">Remove</option>
+        </select>
+      </label>
       <label class="field">Resolution limit
         <select id="preset">
           <option value="1080p" selected>1080p</option>
@@ -277,16 +291,22 @@ footer a { color: var(--accent); }
     $('srcRes').textContent = meta.w + ' × ' + meta.h;
     $('srcDur').textContent = fmtTime(meta.dur);
     $('srcSize').textContent = fmtMB(file.size);
-    $('outRes').textContent = o.w + ' × ' + o.h;
-    $('outBr').textContent = br + ' Mbps';
-    $('outSize').textContent = '≈ ' + fmtMB(estMB * 1048576);
+    const copy = $('method').value === 'copy';
+    $('outRes').textContent = copy ? meta.w + ' × ' + meta.h : o.w + ' × ' + o.h;
+    $('outBr').textContent = copy ? 'Unchanged' : br + ' Mbps';
+    $('outSize').textContent = copy ? '≈ ' + fmtMB(file.size) : '≈ ' + fmtMB(estMB * 1048576);
+    $('outDur').textContent = fmtTime(copy ? meta.dur * 2 : meta.dur);
+    ['preset', 'bitrate', 'fps', 'speed'].forEach((id) => ($(id).disabled = busy || copy));
+    $('audio').disabled = busy || !copy;
+    $('method').disabled = busy;
 
     const notes = [];
     const add = (cls, t) => notes.push('<li class="' + cls + '">' + t + '</li>');
     if (file.size > 1.2e9) add('err', 'This file is over 1 GB. The browser will likely run out of memory. Use the Python version instead.');
     else if (file.size > 400e6) add('warn', 'Large file. It may be slow or fail on phones and low-memory computers.');
-    if (estMB * 1048576 > file.size * 1.1) add('warn', 'The output will be larger than your original. Lower the bitrate if the file is already high quality.');
-    if ($('preset').value === '4k') add('warn', '4K encoding in the browser is very slow.');
+    if (copy) add('', 'Copy mode keeps every frame and doubles the length (half speed). Post a short test first to confirm TikTok handles it.');
+    if (!copy && estMB * 1048576 > file.size * 1.1) add('warn', 'The output will be larger than your original. Lower the bitrate if the file is already high quality.');
+    if (!copy && $('preset').value === '4k') add('warn', '4K encoding in the browser is very slow.');
     $('notes').innerHTML = notes.join('');
     $('go').disabled = busy || file.size > 1.2e9;
   }
@@ -371,30 +391,48 @@ footer a { color: var(--accent); }
     $('reset').classList.add('hidden');
     $('progressWrap').classList.remove('hidden');
     $('bar').removeAttribute('value');
-    ['preset', 'bitrate', 'fps', 'speed'].forEach((id) => ($(id).disabled = true));
+    ['preset', 'bitrate', 'fps', 'speed', 'method', 'audio'].forEach((id) => ($(id).disabled = true));
 
     const ext = (file.name.split('.').pop() || 'mp4').toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp4';
     const inName = 'input.' + ext;
     const outName = 'output.mp4';
+    let mounted = false;
 
     try {
       await loadEngine();
       $('bar').value = 0;
       $('status').textContent = 'Reading your video…';
-      await ffmpeg.writeFile(inName, await FFmpegUtil.fetchFile(file));
+      let inPath = inName;
+      try {
+        try { await ffmpeg.createDir('/work'); } catch (e) {}
+        await ffmpeg.mount('WORKERFS', { files: [file] }, '/work');
+        inPath = '/work/' + file.name;
+        mounted = true;
+      } catch (e) {
+        await ffmpeg.writeFile(inName, await FFmpegUtil.fetchFile(file));
+      }
 
+      const copy = $('method').value === 'copy';
       const o = outputSize();
       const br = parseFloat($('bitrate').value) || 15;
       const fps = $('fps').value;
-      const args = [
-        '-i', inName,
-        '-c:v', 'libx264', '-profile:v', 'high', '-preset', $('speed').value,
-        '-b:v', br + 'M', '-maxrate', (br * 1.5).toFixed(1) + 'M', '-bufsize', (br * 2) + 'M',
-        '-pix_fmt', 'yuv420p'
-      ];
-      if (fps) args.push('-r', fps);
-      args.push('-vf', 'scale=' + o.w + ':' + o.h + ':flags=lanczos');
-      args.push('-c:a', 'aac', '-b:a', '320k', '-ar', '48000', '-movflags', '+faststart', outName);
+      let args;
+      if (copy) {
+        args = ['-itsscale:v', '2', '-i', inPath, '-map', '0:v:0', '-c:v', 'copy', '-tag:v', 'avc1'];
+        if ($('audio').value === 'keep') args.push('-map', '0:a:0?', '-c:a', 'aac', '-b:a', '320k', '-filter:a', 'atempo=0.5');
+        else args.push('-an');
+        args.push('-movflags', '+faststart', outName);
+      } else {
+        args = [
+          '-i', inPath,
+          '-c:v', 'libx264', '-profile:v', 'high', '-preset', $('speed').value,
+          '-b:v', br + 'M', '-maxrate', (br * 1.5).toFixed(1) + 'M', '-bufsize', (br * 2) + 'M',
+          '-pix_fmt', 'yuv420p'
+        ];
+        if (fps) args.push('-r', fps);
+        args.push('-vf', 'scale=' + o.w + ':' + o.h + ':flags=lanczos');
+        args.push('-c:a', 'aac', '-b:a', '320k', '-ar', '48000', '-movflags', '+faststart', outName);
+      }
 
       const code = await ffmpeg.exec(args);
       if (code !== 0) throw new Error('Encoder exited with code ' + code + '. ' + lastLog);
@@ -404,14 +442,15 @@ footer a { color: var(--accent); }
       resultUrl = URL.createObjectURL(blob);
       const base = file.name.replace(/\.[^.]+$/, '');
       $('outName').textContent = base + '_tiktok.mp4';
-      $('outInfo').textContent = o.w + ' × ' + o.h + ', ' + br + ' Mbps, ' + fmtMB(blob.size);
+      $('outInfo').textContent = (copy ? meta.w + ' × ' + meta.h + ', original quality, ' : o.w + ' × ' + o.h + ', ' + br + ' Mbps, ') + fmtMB(blob.size);
       $('preview').src = resultUrl;
       $('download').href = resultUrl;
       $('download').download = base + '_tiktok.mp4';
       $('result').classList.remove('hidden');
       $('status').textContent = 'Done.';
       $('result').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      try { await ffmpeg.deleteFile(inName); await ffmpeg.deleteFile(outName); } catch (e) {}
+      try { await ffmpeg.deleteFile(inName); } catch (e) {}
+      try { await ffmpeg.deleteFile(outName); } catch (e) {}
     } catch (err) {
       if (canceled) {
         $('status').textContent = 'Canceled.';
@@ -421,6 +460,7 @@ footer a { color: var(--accent); }
           ' Try a smaller file or a lower resolution, or use the Python version.';
       }
     } finally {
+      if (mounted) { try { await ffmpeg.unmount('/work'); } catch (e) {} }
       busy = false;
       $('cancel').classList.add('hidden');
       $('reset').classList.remove('hidden');
@@ -458,6 +498,7 @@ footer a { color: var(--accent); }
   $('drop').addEventListener('drop', (e) => pick(e.dataTransfer.files[0]));
   $('preset').addEventListener('change', () => { $('bitrate').value = PRESETS[$('preset').value].bitrate; refresh(); });
   $('bitrate').addEventListener('input', refresh);
+  $('method').addEventListener('change', refresh);
   $('go').addEventListener('click', run);
   $('cancel').addEventListener('click', cancel);
   $('reset').addEventListener('click', reset);

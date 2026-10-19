@@ -4,15 +4,16 @@ A small command-line tool that re-encodes your videos into a clean, high-bitrate
 
 It runs **locally on your computer**. No accounts, no uploads to third-party servers.
 
-## What it does
+## Try it in your browser
 
-- Reads your video's resolution, frame rate and codec with `ffprobe`
-- Downscales only if the video exceeds the chosen preset (never upscales)
-- Keeps your frame rate, with a constant frame rate output
-- Encodes at a high bitrate with `yuv420p`, `faststart` and 320k AAC audio
-- Supports portrait and landscape videos and batch processing
+**https://karlcaps.github.io/tiktok-optimizer/** (no install; runs locally in your browser)
 
-> **Note:** TikTok re-encodes every upload. This tool does not bypass that. It gives TikTok a high-quality source so the final result looks as good as possible.
+## Two modes
+
+- **Retime (default for H.264 files):** copies your video stream untouched and only rewrites its timestamps (2x length, half the frame rate label). No re-encoding, so there is zero quality loss and it finishes in seconds. Audio is slowed to match, or removed with `--audio drop`.
+- **Re-encode:** a clean high-bitrate H.264/HEVC MP4, used automatically for non-H.264 sources (such as HEVC) or with `--mode reencode`.
+
+> **Experimental:** retime mode is based on analysing how a similar service changes files. Post a short test first to confirm TikTok handles it the way you expect. TikTok re-encodes every upload either way.
 
 ## Requirements
 
@@ -24,7 +25,7 @@ No Python packages need to be installed.
 ## Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/tiktok-optimizer.git
+git clone https://github.com/KarlCaps/tiktok-optimizer.git
 cd tiktok-optimizer
 ```
 
@@ -32,7 +33,8 @@ cd tiktok-optimizer
 
 ```bash
 python tiktok_optimizer.py video.mp4
-python tiktok_optimizer.py video.mp4 --preset 4k
+python tiktok_optimizer.py video.mp4 --audio drop
+python tiktok_optimizer.py video.mp4 --mode reencode --preset 4k
 python tiktok_optimizer.py clip1.mp4 clip2.mov --fps 60 --bitrate 20
 python tiktok_optimizer.py video.mov --codec hevc
 ```
@@ -45,6 +47,9 @@ Output is saved next to the original as `<name>_tiktok.mp4`.
 
 | Option | Description |
 | --- | --- |
+| `--mode` | `auto` (default), `retime`, or `reencode` |
+| `--stretch` | Retime: length multiplier (default 2) |
+| `--audio` | Retime: `keep` (slowed to match, default) or `drop` |
 | `--preset` | `1080p` (default), `4k`, or `source` (keep original resolution) |
 | `--fps` | Force output fps (default: keep source, capped at 60 for 1080p/4k) |
 | `--bitrate` | Video bitrate in Mbps (default: 15 for 1080p, 40 for 4k, 25 for source) |

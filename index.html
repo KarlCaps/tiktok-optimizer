@@ -167,14 +167,8 @@ footer a { color: var(--accent); }
     <div class="controls">
       <label class="field">Method
         <select id="method">
-          <option value="copy" selected>Fast copy, no re-encode</option>
+          <option value="instant" selected>Instant (header only, recommended)</option>
           <option value="encode">Re-encode (H.265 or oversized files)</option>
-        </select>
-      </label>
-      <label class="field">Audio (copy mode)
-        <select id="audio">
-          <option value="keep" selected>Keep (timing stretched)</option>
-          <option value="drop">Remove</option>
         </select>
       </label>
       <label class="field">Resolution limit
@@ -291,20 +285,19 @@ footer a { color: var(--accent); }
     $('srcRes').textContent = meta.w + ' × ' + meta.h;
     $('srcDur').textContent = fmtTime(meta.dur);
     $('srcSize').textContent = fmtMB(file.size);
-    const copy = $('method').value === 'copy';
+    const copy = $('method').value === 'instant';
     $('outRes').textContent = copy ? meta.w + ' × ' + meta.h : o.w + ' × ' + o.h;
     $('outBr').textContent = copy ? 'Unchanged' : br + ' Mbps';
     $('outSize').textContent = copy ? '≈ ' + fmtMB(file.size) : '≈ ' + fmtMB(estMB * 1048576);
     $('outDur').textContent = fmtTime(copy ? meta.dur * 2 : meta.dur);
     ['preset', 'bitrate', 'fps', 'speed'].forEach((id) => ($(id).disabled = busy || copy));
-    $('audio').disabled = busy || !copy;
     $('method').disabled = busy;
 
     const notes = [];
     const add = (cls, t) => notes.push('<li class="' + cls + '">' + t + '</li>');
     if (file.size > 1.2e9) add('err', 'This file is over 1 GB. The browser will likely run out of memory. Use the Python version instead.');
     else if (file.size > 400e6) add('warn', 'Large file. It may be slow or fail on phones and low-memory computers.');
-    if (copy) add('', 'Copy mode keeps every frame and doubles the length (half speed). Post a short test first to confirm TikTok handles it.');
+    if (copy) add('', 'Instant mode keeps every frame and sound untouched and doubles the length (half speed). It takes a second or two, even for large files. Post a short test first to confirm TikTok handles it.');
     if (!copy && estMB * 1048576 > file.size * 1.1) add('warn', 'The output will be larger than your original. Lower the bitrate if the file is already high quality.');
     if (!copy && $('preset').value === '4k') add('warn', '4K encoding in the browser is very slow.');
     $('notes').innerHTML = notes.join('');
@@ -383,6 +376,105 @@ footer a { color: var(--accent); }
     throw lastErr;
   }
 
+  // ---- Instant mode: rewrite MP4 timing headers only (no decoding, no re-encoding, no copying of video data) ----
+  async function retimeMp4(blob) {
+    const readAt = async (off, len) => new Uint8Array(await blob.slice(off, off + len).arrayBuffer());
+    const tops = [];
+    for (let off = 0; off < blob.size;) {
+      const h = await readAt(off, 16);
+      const hv = new DataView(h.buffer);
+      let size = hv.getUint32(0);
+      const type = String.fromCharCode(h[4], h[5], h[6], h[7]);
+      if (size === 1) size = Number(hv.getBigUint64(8));
+      else if (size === 0) size = blob.size - off;
+      if (size < 8) throw new Error('This does not look like a valid MP4 or MOV file.');
+      tops.push({ type, off, size });
+      off += size;
+    }
+    const moovBox = tops.find((b) => b.type === 'moov');
+    if (!moovBox) throw new Error('No movie header found. Is this an MP4 or MOV file?');
+    if (tops.some((b) => b.type === 'moof')) throw new Error('Fragmented MP4 files are not supported in instant mode. Use Re-encode.');
+
+    const moov = await readAt(moovBox.off, moovBox.size);
+    const dv = new DataView(moov.buffer);
+    const tag = (o) => String.fromCharCode(moov[o + 4], moov[o + 5], moov[o + 6], moov[o + 7]);
+    const kids = (start, end) => {
+      const out = [];
+      for (let o = start; o + 8 <= end;) {
+        let sz = dv.getUint32(o), hdr = 8;
+        if (sz === 1) { sz = Number(dv.getBigUint64(o + 8)); hdr = 16; } else if (sz === 0) sz = end - o;
+        if (sz < 8) break;
+        out.push({ t: tag(o), body: o + hdr, end: o + sz });
+        o += sz;
+      }
+      return out;
+    };
+    const find = (p, t) => kids(p.body, p.end).find((k) => k.t === t);
+    const dbl32 = (o) => { const v = dv.getUint32(o); if (v !== 0xFFFFFFFF) dv.setUint32(o, v * 2); };
+    const dbl64 = (o) => { const v = dv.getBigUint64(o); if (v !== 0xFFFFFFFFFFFFFFFFn) dv.setBigUint64(o, v * 2n); };
+
+    const root = { body: dv.getUint32(0) === 1 ? 16 : 8, end: moov.length };
+    const mvhd = find(root, 'mvhd');
+    if (moov[mvhd.body] === 1) dbl64(mvhd.body + 24); else dbl32(mvhd.body + 16);
+
+    const traks = kids(root.body, root.end).filter((k) => k.t === 'trak');
+    for (const trak of traks) {
+      const tkhd = find(trak, 'tkhd');
+      if (moov[tkhd.body] === 1) dbl64(tkhd.body + 28); else dbl32(tkhd.body + 20);
+      const edts = find(trak, 'edts');
+      const elst = edts && find(edts, 'elst');
+      if (elst) {
+        const ver = moov[elst.body], n = dv.getUint32(elst.body + 4);
+        let p = elst.body + 8;
+        for (let i = 0; i < n; i++) {
+          if (ver === 1) { dbl64(p); const mt = dv.getBigInt64(p + 8); if (mt >= 0n) dv.setBigInt64(p + 8, mt * 2n); p += 20; }
+          else { dbl32(p); const mt = dv.getInt32(p + 4); if (mt >= 0) dv.setInt32(p + 4, mt * 2); p += 12; }
+        }
+      }
+      const mdia = find(trak, 'mdia');
+      const mdhd = find(mdia, 'mdhd');
+      if (moov[mdhd.body] === 1) dbl64(mdhd.body + 24); else dbl32(mdhd.body + 16);
+      const stbl = find(find(mdia, 'minf'), 'stbl');
+      const stts = find(stbl, 'stts');
+      for (let i = 0, n = dv.getUint32(stts.body + 4); i < n; i++) dbl32(stts.body + 8 + 8 * i + 4);
+      const ctts = find(stbl, 'ctts');
+      if (ctts) {
+        const signed = moov[ctts.body] === 1;
+        for (let i = 0, n = dv.getUint32(ctts.body + 4); i < n; i++) {
+          const p = ctts.body + 8 + 8 * i + 4;
+          if (signed) dv.setInt32(p, dv.getInt32(p) * 2); else dbl32(p);
+        }
+      }
+    }
+
+    // If the header sits after the video data, move it to the front (fast-start) and shift chunk offsets.
+    const mdatIdx = tops.findIndex((b) => b.type === 'mdat');
+    const moveFront = mdatIdx !== -1 && tops.indexOf(moovBox) > mdatIdx;
+    if (moveFront) {
+      for (const trak of traks) {
+        const stbl = find(find(find(trak, 'mdia'), 'minf'), 'stbl');
+        const stco = find(stbl, 'stco'), co64 = find(stbl, 'co64');
+        if (stco) {
+          for (let i = 0, n = dv.getUint32(stco.body + 4); i < n; i++) {
+            const p = stco.body + 8 + 4 * i, v = dv.getUint32(p) + moovBox.size;
+            if (v > 0xFFFFFFFF) throw new Error('File too large to move its header. Use Re-encode.');
+            dv.setUint32(p, v);
+          }
+        }
+        if (co64) {
+          for (let i = 0, n = dv.getUint32(co64.body + 4); i < n; i++) {
+            const p = co64.body + 8 + 8 * i;
+            dv.setBigUint64(p, dv.getBigUint64(p) + BigInt(moovBox.size));
+          }
+        }
+      }
+    }
+
+    const order = tops.filter((b) => b !== moovBox);
+    order.splice(moveFront ? (tops[0].type === 'ftyp' ? 1 : 0) : tops.indexOf(moovBox), 0, moovBox);
+    return new Blob(order.map((b) => (b === moovBox ? moov : blob.slice(b.off, b.off + b.size))), { type: 'video/mp4' });
+  }
+
   async function run() {
     busy = true;
     canceled = false;
@@ -391,7 +483,7 @@ footer a { color: var(--accent); }
     $('reset').classList.add('hidden');
     $('progressWrap').classList.remove('hidden');
     $('bar').removeAttribute('value');
-    ['preset', 'bitrate', 'fps', 'speed', 'method', 'audio'].forEach((id) => ($(id).disabled = true));
+    ['preset', 'bitrate', 'fps', 'speed', 'method'].forEach((id) => ($(id).disabled = true));
 
     const ext = (file.name.split('.').pop() || 'mp4').toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp4';
     const inName = 'input.' + ext;
@@ -399,6 +491,22 @@ footer a { color: var(--accent); }
     let mounted = false;
 
     try {
+      if ($('method').value === 'instant') {
+        const t0 = performance.now();
+        $('status').textContent = 'Rewriting timing…';
+        const blob = await retimeMp4(file);
+        if (resultUrl) URL.revokeObjectURL(resultUrl);
+        resultUrl = URL.createObjectURL(blob);
+        const base = file.name.replace(/\.[^.]+$/, '');
+        $('outName').textContent = base + '_tiktok.mp4';
+        $('outInfo').textContent = meta.w + ' × ' + meta.h + ', original quality, ' + fmtMB(blob.size);
+        $('preview').src = resultUrl;
+        $('download').href = resultUrl;
+        $('download').download = base + '_tiktok.mp4';
+        $('result').classList.remove('hidden');
+        $('status').textContent = 'Done in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s.';
+        return;
+      }
       await loadEngine();
       $('bar').value = 0;
       $('status').textContent = 'Reading your video…';
@@ -412,17 +520,12 @@ footer a { color: var(--accent); }
         await ffmpeg.writeFile(inName, await FFmpegUtil.fetchFile(file));
       }
 
-      const copy = $('method').value === 'copy';
+      const copy = false;
       const o = outputSize();
       const br = parseFloat($('bitrate').value) || 15;
       const fps = $('fps').value;
       let args;
-      if (copy) {
-        args = ['-itsscale:v', '2', '-itsscale:a', '2', '-i', inPath, '-map', '0:v:0', '-c:v', 'copy', '-tag:v', 'avc1'];
-        if ($('audio').value === 'keep') args.push('-map', '0:a:0?', '-c:a', 'copy');
-        else args.push('-an');
-        args.push('-movflags', '+faststart', outName);
-      } else {
+      {
         args = [
           '-i', inPath,
           '-c:v', 'libx264', '-profile:v', 'high', '-preset', $('speed').value,

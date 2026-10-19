@@ -168,7 +168,23 @@ footer a { color: var(--accent); }
       <label class="field">Method
         <select id="method">
           <option value="instant" selected>Instant (header only, recommended)</option>
+          <option value="videoonly">Instant, video only (audio unchanged)</option>
+          <option value="slowmo">Slow motion (header only)</option>
           <option value="encode">Re-encode (H.265 or oversized files)</option>
+        </select>
+      </label>
+      <label class="field">Slow-motion speed
+        <select id="slow">
+          <option value="2" selected>2× slower</option>
+          <option value="3">3× slower</option>
+          <option value="4">4× slower</option>
+          <option value="1.5">1.5× slower</option>
+        </select>
+      </label>
+      <label class="field">Audio (slow motion)
+        <select id="audio">
+          <option value="mute" selected>Mute</option>
+          <option value="keep">Keep (timing stretched)</option>
         </select>
       </label>
       <label class="field">Resolution limit
@@ -218,6 +234,46 @@ footer a { color: var(--accent); }
     <video id="preview" controls playsinline></video>
     <div class="actions">
       <a class="btn primary" id="download" download>Download optimized video</a>
+    </div>
+  </section>
+
+  <!-- Slow-mo: separate tool. Stretches only the video; audio is left exactly as is. -->
+  <section class="panel" id="slowmo" aria-label="Slow-mo">
+    <style>
+      #slowmo h2 { margin: 0 0 6px; font-family: "Bricolage Grotesque", system-ui, sans-serif; font-size: 1.5rem; letter-spacing: -0.02em; }
+      #slowmo .sub { color: var(--muted); margin: 0 0 16px; }
+      #slowmo .drop { padding: 22px 16px; }
+      #slowmo .picked { margin: 14px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+    </style>
+    <h2>Slow-mo</h2>
+    <p class="sub">Stretches only the video to 2× length and leaves the audio exactly as it is, so the sound ends partway through. Instant, with no re-encoding.</p>
+
+    <label class="drop" id="sm-drop">
+      <input type="file" id="sm-file" accept="video/mp4,video/quicktime,video/*">
+      <strong>Choose a video for slow-mo</strong>
+      <span>MP4 or MOV</span>
+    </label>
+    <p class="picked hidden" id="sm-name"></p>
+
+    <div class="controls">
+      <label class="field">Slow-down
+        <select id="sm-factor">
+          <option value="2" selected>2× longer</option>
+          <option value="3">3× longer</option>
+          <option value="4">4× longer</option>
+        </select>
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" id="sm-go" disabled>Make slow-mo</button>
+    </div>
+    <p class="status" id="sm-status" role="status" aria-live="polite"></p>
+
+    <div class="result hidden" id="sm-result">
+      <video id="sm-preview" controls playsinline></video>
+      <div class="actions">
+        <a class="btn primary" id="sm-download" download>Download slow-mo video</a>
+      </div>
     </div>
   </section>
 
@@ -285,19 +341,28 @@ footer a { color: var(--accent); }
     $('srcRes').textContent = meta.w + ' × ' + meta.h;
     $('srcDur').textContent = fmtTime(meta.dur);
     $('srcSize').textContent = fmtMB(file.size);
-    const copy = $('method').value === 'instant';
+    const mth = $('method').value;
+    const copy = mth !== 'encode';
+    const factor = mth === 'slowmo' ? parseFloat($('slow').value) : 2;
     $('outRes').textContent = copy ? meta.w + ' × ' + meta.h : o.w + ' × ' + o.h;
     $('outBr').textContent = copy ? 'Unchanged' : br + ' Mbps';
     $('outSize').textContent = copy ? '≈ ' + fmtMB(file.size) : '≈ ' + fmtMB(estMB * 1048576);
-    $('outDur').textContent = fmtTime(copy ? meta.dur * 2 : meta.dur);
+    $('outDur').textContent = fmtTime(copy ? meta.dur * factor : meta.dur);
     ['preset', 'bitrate', 'fps', 'speed'].forEach((id) => ($(id).disabled = busy || copy));
     $('method').disabled = busy;
+    $('slow').disabled = busy || mth !== 'slowmo';
+    $('audio').disabled = busy || mth !== 'slowmo';
 
     const notes = [];
     const add = (cls, t) => notes.push('<li class="' + cls + '">' + t + '</li>');
     if (file.size > 1.2e9) add('err', 'This file is over 1 GB. The browser will likely run out of memory. Use the Python version instead.');
     else if (file.size > 400e6) add('warn', 'Large file. It may be slow or fail on phones and low-memory computers.');
-    if (copy) add('', 'Instant mode keeps every frame and sound untouched and doubles the length (half speed). It takes a second or two, even for large files. Post a short test first to confirm TikTok handles it.');
+    if (mth === 'slowmo') {
+      add('', 'Slow motion plays every frame for longer. A 60 fps clip slows smoothly to 30 fps, but a 30 fps clip drops to 15 fps and looks choppy.');
+      if ($('audio').value === 'keep') add('warn', 'Keeping audio only stretches its timing, so most players will glitch. Mute is recommended. For audio slowed to match, use the Python version.');
+    }
+    if (mth === 'instant') add('', 'Instant mode keeps every frame and sound untouched and doubles the length (half speed). It takes a second or two, even for large files. Post a short test first to confirm TikTok handles it.');
+    if (mth === 'videoonly') add('', 'Video only: the video is stretched to twice the length while the audio keeps its original timing, so the audio ends halfway through. Post a short test first.');
     if (!copy && estMB * 1048576 > file.size * 1.1) add('warn', 'The output will be larger than your original. Lower the bitrate if the file is already high quality.');
     if (!copy && $('preset').value === '4k') add('warn', '4K encoding in the browser is very slow.');
     $('notes').innerHTML = notes.join('');
@@ -377,7 +442,128 @@ footer a { color: var(--accent); }
   }
 
   // ---- Instant mode: rewrite MP4 timing headers only (no decoding, no re-encoding, no copying of video data) ----
-  async function retimeMp4(blob) {
+  async function retimeMp4(blob, factor = 2, mute = false) {
+    const readAt = async (off, len) => new Uint8Array(await blob.slice(off, off + len).arrayBuffer());
+    const tops = [];
+    for (let off = 0; off < blob.size;) {
+      const h = await readAt(off, 16);
+      const hv = new DataView(h.buffer);
+      let size = hv.getUint32(0);
+      const type = String.fromCharCode(h[4], h[5], h[6], h[7]);
+      if (size === 1) size = Number(hv.getBigUint64(8));
+      else if (size === 0) size = blob.size - off;
+      if (size < 8) throw new Error('This does not look like a valid MP4 or MOV file.');
+      tops.push({ type, off, size });
+      off += size;
+    }
+    const moovBox = tops.find((b) => b.type === 'moov');
+    if (!moovBox) throw new Error('No movie header found. Is this an MP4 or MOV file?');
+    if (tops.some((b) => b.type === 'moof')) throw new Error('Fragmented MP4 files are not supported in instant mode. Use Re-encode.');
+
+    let moov = await readAt(moovBox.off, moovBox.size);
+    let dv = new DataView(moov.buffer);
+    const tag = (o) => String.fromCharCode(moov[o + 4], moov[o + 5], moov[o + 6], moov[o + 7]);
+    const kids = (start, end) => {
+      const out = [];
+      for (let o = start; o + 8 <= end;) {
+        let sz = dv.getUint32(o), hdr = 8;
+        if (sz === 1) { sz = Number(dv.getBigUint64(o + 8)); hdr = 16; } else if (sz === 0) sz = end - o;
+        if (sz < 8) break;
+        out.push({ t: tag(o), start: o, body: o + hdr, end: o + sz });
+        o += sz;
+      }
+      return out;
+    };
+    const find = (p, t) => kids(p.body, p.end).find((k) => k.t === t);
+    const dbl32 = (o) => { const v = dv.getUint32(o); if (v !== 0xFFFFFFFF) dv.setUint32(o, Math.round(v * factor)); };
+    const dbl64 = (o) => { const v = dv.getBigUint64(o); if (v !== 0xFFFFFFFFFFFFFFFFn) dv.setBigUint64(o, BigInt(Math.round(Number(v) * factor))); };
+
+    const oldMoovSize = moov.length;
+    if (mute) {  // remove audio tracks from the header (the audio bytes simply become unused)
+      const r0 = { body: dv.getUint32(0) === 1 ? 16 : 8, end: moov.length };
+      const drop = kids(r0.body, r0.end).filter((t) => {
+        if (t.t !== 'trak') return false;
+        const h = find(find(t, 'mdia'), 'hdlr');
+        return String.fromCharCode(moov[h.body + 8], moov[h.body + 9], moov[h.body + 10], moov[h.body + 11]) === 'soun';
+      });
+      if (drop.length) {
+        const pieces = []; let pos = 0;
+        for (const t of drop) { pieces.push(moov.subarray(pos, t.start)); pos = t.end; }
+        pieces.push(moov.subarray(pos));
+        const merged = new Uint8Array(pieces.reduce((n, k) => n + k.length, 0));
+        let w = 0;
+        for (const k of pieces) { merged.set(k, w); w += k.length; }
+        const mv = new DataView(merged.buffer);
+        if (mv.getUint32(0) === 1) mv.setBigUint64(8, BigInt(merged.length)); else mv.setUint32(0, merged.length);
+        moov = merged; dv = mv;
+      }
+    }
+    const root = { body: dv.getUint32(0) === 1 ? 16 : 8, end: moov.length };
+    const mvhd = find(root, 'mvhd');
+    if (moov[mvhd.body] === 1) dbl64(mvhd.body + 24); else dbl32(mvhd.body + 16);
+
+    const traks = kids(root.body, root.end).filter((k) => k.t === 'trak');
+    for (const trak of traks) {
+      const tkhd = find(trak, 'tkhd');
+      if (moov[tkhd.body] === 1) dbl64(tkhd.body + 28); else dbl32(tkhd.body + 20);
+      const edts = find(trak, 'edts');
+      const elst = edts && find(edts, 'elst');
+      if (elst) {
+        const ver = moov[elst.body], n = dv.getUint32(elst.body + 4);
+        let p = elst.body + 8;
+        for (let i = 0; i < n; i++) {
+          if (ver === 1) { dbl64(p); const mt = dv.getBigInt64(p + 8); if (mt >= 0n) dv.setBigInt64(p + 8, BigInt(Math.round(Number(mt) * factor))); p += 20; }
+          else { dbl32(p); const mt = dv.getInt32(p + 4); if (mt >= 0) dv.setInt32(p + 4, Math.round(mt * factor)); p += 12; }
+        }
+      }
+      const mdia = find(trak, 'mdia');
+      const mdhd = find(mdia, 'mdhd');
+      if (moov[mdhd.body] === 1) dbl64(mdhd.body + 24); else dbl32(mdhd.body + 16);
+      const stbl = find(find(mdia, 'minf'), 'stbl');
+      const stts = find(stbl, 'stts');
+      for (let i = 0, n = dv.getUint32(stts.body + 4); i < n; i++) dbl32(stts.body + 8 + 8 * i + 4);
+      const ctts = find(stbl, 'ctts');
+      if (ctts) {
+        const signed = moov[ctts.body] === 1;
+        for (let i = 0, n = dv.getUint32(ctts.body + 4); i < n; i++) {
+          const p = ctts.body + 8 + 8 * i + 4;
+          if (signed) dv.setInt32(p, Math.round(dv.getInt32(p) * factor)); else dbl32(p);
+        }
+      }
+    }
+
+    // If the header sits after the video data, move it to the front (fast-start) and shift chunk offsets.
+    const mdatIdx = tops.findIndex((b) => b.type === 'mdat');
+    const moveFront = mdatIdx !== -1 && tops.indexOf(moovBox) > mdatIdx;
+    const moovBefore = mdatIdx !== -1 && tops.indexOf(moovBox) < mdatIdx;
+    const shift = moveFront ? moov.length : (moovBefore ? moov.length - oldMoovSize : 0);
+    if (shift !== 0) {
+      for (const trak of traks) {
+        const stbl = find(find(find(trak, 'mdia'), 'minf'), 'stbl');
+        const stco = find(stbl, 'stco'), co64 = find(stbl, 'co64');
+        if (stco) {
+          for (let i = 0, n = dv.getUint32(stco.body + 4); i < n; i++) {
+            const p = stco.body + 8 + 4 * i, v = dv.getUint32(p) + shift;
+            if (v > 0xFFFFFFFF || v < 0) throw new Error('File too large to move its header. Use Re-encode.');
+            dv.setUint32(p, v);
+          }
+        }
+        if (co64) {
+          for (let i = 0, n = dv.getUint32(co64.body + 4); i < n; i++) {
+            const p = co64.body + 8 + 8 * i;
+            dv.setBigUint64(p, dv.getBigUint64(p) + BigInt(shift));
+          }
+        }
+      }
+    }
+
+    const order = tops.filter((b) => b !== moovBox);
+    order.splice(moveFront ? (tops[0].type === 'ftyp' ? 1 : 0) : tops.indexOf(moovBox), 0, moovBox);
+    return new Blob(order.map((b) => (b === moovBox ? moov : blob.slice(b.off, b.off + b.size))), { type: 'video/mp4' });
+  }
+
+  // ---- Instant mode, video only: stretch the video track to 2x and leave every other track (audio) exactly as is ----
+  async function retimeMp4VideoOnly(blob) {
     const readAt = async (off, len) => new Uint8Array(await blob.slice(off, off + len).arrayBuffer());
     const tops = [];
     for (let off = 0; off < blob.size;) {
@@ -418,7 +604,12 @@ footer a { color: var(--accent); }
     if (moov[mvhd.body] === 1) dbl64(mvhd.body + 24); else dbl32(mvhd.body + 16);
 
     const traks = kids(root.body, root.end).filter((k) => k.t === 'trak');
+    const isVideo = (trak) => {
+      const hdlr = find(find(trak, 'mdia'), 'hdlr');
+      return hdlr && tag(hdlr.body + 4) === 'vide'; // handler_type sits 8 bytes into the box body
+    };
     for (const trak of traks) {
+      if (!isVideo(trak)) continue; // audio and any other track: not touched
       const tkhd = find(trak, 'tkhd');
       if (moov[tkhd.body] === 1) dbl64(tkhd.body + 28); else dbl32(tkhd.body + 20);
       const edts = find(trak, 'edts');
@@ -447,7 +638,7 @@ footer a { color: var(--accent); }
       }
     }
 
-    // If the header sits after the video data, move it to the front (fast-start) and shift chunk offsets.
+    // If the header sits after the media data, move it to the front (fast-start) and shift every track's chunk offsets.
     const mdatIdx = tops.findIndex((b) => b.type === 'mdat');
     const moveFront = mdatIdx !== -1 && tops.indexOf(moovBox) > mdatIdx;
     if (moveFront) {
@@ -483,7 +674,7 @@ footer a { color: var(--accent); }
     $('reset').classList.add('hidden');
     $('progressWrap').classList.remove('hidden');
     $('bar').removeAttribute('value');
-    ['preset', 'bitrate', 'fps', 'speed', 'method'].forEach((id) => ($(id).disabled = true));
+    ['preset', 'bitrate', 'fps', 'speed', 'method', 'slow', 'audio'].forEach((id) => ($(id).disabled = true));
 
     const ext = (file.name.split('.').pop() || 'mp4').toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp4';
     const inName = 'input.' + ext;
@@ -491,18 +682,37 @@ footer a { color: var(--accent); }
     let mounted = false;
 
     try {
-      if ($('method').value === 'instant') {
+      if ($('method').value === 'videoonly') {
         const t0 = performance.now();
-        $('status').textContent = 'Rewriting timing…';
-        const blob = await retimeMp4(file);
+        $('status').textContent = 'Rewriting video timing…';
+        const blob = await retimeMp4VideoOnly(file);
         if (resultUrl) URL.revokeObjectURL(resultUrl);
         resultUrl = URL.createObjectURL(blob);
         const base = file.name.replace(/\.[^.]+$/, '');
-        $('outName').textContent = base + '_tiktok.mp4';
+        const fname = base + '_tiktok_videoonly.mp4';
+        $('outName').textContent = fname;
+        $('outInfo').textContent = meta.w + ' × ' + meta.h + ', original quality, audio unchanged, ' + fmtMB(blob.size);
+        $('preview').src = resultUrl;
+        $('download').href = resultUrl;
+        $('download').download = fname;
+        $('result').classList.remove('hidden');
+        $('status').textContent = 'Done in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s.';
+        return;
+      }
+      if ($('method').value !== 'encode') {
+        const slow = $('method').value === 'slowmo';
+        const t0 = performance.now();
+        $('status').textContent = 'Rewriting timing…';
+        const blob = await retimeMp4(file, slow ? parseFloat($('slow').value) : 2, slow && $('audio').value === 'mute');
+        if (resultUrl) URL.revokeObjectURL(resultUrl);
+        resultUrl = URL.createObjectURL(blob);
+        const base = file.name.replace(/\.[^.]+$/, '');
+        const fname = base + (slow ? '_slowmo' + $('slow').value + 'x' : '_tiktok') + '.mp4';
+        $('outName').textContent = fname;
         $('outInfo').textContent = meta.w + ' × ' + meta.h + ', original quality, ' + fmtMB(blob.size);
         $('preview').src = resultUrl;
         $('download').href = resultUrl;
-        $('download').download = base + '_tiktok.mp4';
+        $('download').download = fname;
         $('result').classList.remove('hidden');
         $('status').textContent = 'Done in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s.';
         return;
@@ -602,9 +812,163 @@ footer a { color: var(--accent); }
   $('preset').addEventListener('change', () => { $('bitrate').value = PRESETS[$('preset').value].bitrate; refresh(); });
   $('bitrate').addEventListener('input', refresh);
   $('method').addEventListener('change', refresh);
+  $('slow').addEventListener('change', refresh);
+  $('audio').addEventListener('change', refresh);
   $('go').addEventListener('click', run);
   $('cancel').addEventListener('click', cancel);
   $('reset').addEventListener('click', reset);
+})();
+</script>
+<script>
+(function () {
+  // Stretch ONLY the video track(s) by a factor by rewriting timing headers. Audio is left exactly as is.
+  async function stretchVideo(blob, m) {
+    const readAt = async (off, len) => new Uint8Array(await blob.slice(off, off + len).arrayBuffer());
+    const tops = [];
+    for (let off = 0; off < blob.size;) {
+      const h = await readAt(off, 16);
+      const hv = new DataView(h.buffer);
+      let size = hv.getUint32(0);
+      const type = String.fromCharCode(h[4], h[5], h[6], h[7]);
+      if (size === 1) size = Number(hv.getBigUint64(8));
+      else if (size === 0) size = blob.size - off;
+      if (size < 8) throw new Error('This does not look like a valid MP4 or MOV file.');
+      tops.push({ type, off, size });
+      off += size;
+    }
+    const moovBox = tops.find((b) => b.type === 'moov');
+    if (!moovBox) throw new Error('No movie header found. Is this an MP4 or MOV file?');
+    if (tops.some((b) => b.type === 'moof')) throw new Error('Fragmented MP4 files are not supported.');
+
+    const moov = await readAt(moovBox.off, moovBox.size);
+    const dv = new DataView(moov.buffer);
+    const tag = (o) => String.fromCharCode(moov[o + 4], moov[o + 5], moov[o + 6], moov[o + 7]);
+    const kids = (start, end) => {
+      const out = [];
+      for (let o = start; o + 8 <= end;) {
+        let sz = dv.getUint32(o), hdr = 8;
+        if (sz === 1) { sz = Number(dv.getBigUint64(o + 8)); hdr = 16; } else if (sz === 0) sz = end - o;
+        if (sz < 8) break;
+        out.push({ t: tag(o), body: o + hdr, end: o + sz });
+        o += sz;
+      }
+      return out;
+    };
+    const find = (p, t) => kids(p.body, p.end).find((k) => k.t === t);
+    const mul32 = (o) => { const v = dv.getUint32(o); if (v !== 0xFFFFFFFF) dv.setUint32(o, v * m); };
+    const mul64 = (o) => { const v = dv.getBigUint64(o); if (v !== 0xFFFFFFFFFFFFFFFFn) dv.setBigUint64(o, v * BigInt(m)); };
+
+    const root = { body: dv.getUint32(0) === 1 ? 16 : 8, end: moov.length };
+    const traks = kids(root.body, root.end).filter((k) => k.t === 'trak');
+    let videoTracks = 0, maxDur = 0n;
+    for (const trak of traks) {
+      const tkhd = find(trak, 'tkhd');
+      const mdia = find(trak, 'mdia');
+      const handler = String.fromCharCode(...moov.slice(find(mdia, 'hdlr').body + 8, find(mdia, 'hdlr').body + 12));
+      if (handler === 'vide') {
+        videoTracks++;
+        if (moov[tkhd.body] === 1) mul64(tkhd.body + 28); else mul32(tkhd.body + 20);
+        const edts = find(trak, 'edts');
+        const elst = edts && find(edts, 'elst');
+        if (elst) {
+          const ver = moov[elst.body], n = dv.getUint32(elst.body + 4);
+          let p = elst.body + 8;
+          for (let i = 0; i < n; i++) {
+            if (ver === 1) { mul64(p); const mt = dv.getBigInt64(p + 8); if (mt >= 0n) dv.setBigInt64(p + 8, mt * BigInt(m)); p += 20; }
+            else { mul32(p); const mt = dv.getInt32(p + 4); if (mt >= 0) dv.setInt32(p + 4, mt * m); p += 12; }
+          }
+        }
+        const mdhd = find(mdia, 'mdhd');
+        if (moov[mdhd.body] === 1) mul64(mdhd.body + 24); else mul32(mdhd.body + 16);
+        const stbl = find(find(mdia, 'minf'), 'stbl');
+        const stts = find(stbl, 'stts');
+        for (let i = 0, n = dv.getUint32(stts.body + 4); i < n; i++) mul32(stts.body + 8 + 8 * i + 4);
+        const ctts = find(stbl, 'ctts');
+        if (ctts) {
+          const signed = moov[ctts.body] === 1;
+          for (let i = 0, n = dv.getUint32(ctts.body + 4); i < n; i++) {
+            const p = ctts.body + 8 + 8 * i + 4;
+            if (signed) dv.setInt32(p, dv.getInt32(p) * m); else mul32(p);
+          }
+        }
+      }
+      const d = moov[tkhd.body] === 1 ? dv.getBigUint64(tkhd.body + 28) : BigInt(dv.getUint32(tkhd.body + 20));
+      if (d < 0xFFFFFFFFn && d > maxDur) maxDur = d;
+    }
+    if (!videoTracks) throw new Error('No video track found in this file.');
+
+    // The movie duration is the longest track, which is now the stretched video.
+    const mvhd = find(root, 'mvhd');
+    if (moov[mvhd.body] === 1) { if (dv.getBigUint64(mvhd.body + 24) !== 0xFFFFFFFFFFFFFFFFn) dv.setBigUint64(mvhd.body + 24, maxDur); }
+    else if (dv.getUint32(mvhd.body + 16) !== 0xFFFFFFFF) dv.setUint32(mvhd.body + 16, Number(maxDur));
+
+    // If the header sits after the video data, move it to the front and shift chunk offsets.
+    const mdatIdx = tops.findIndex((b) => b.type === 'mdat');
+    const moveFront = mdatIdx !== -1 && tops.indexOf(moovBox) > mdatIdx;
+    if (moveFront) {
+      for (const trak of traks) {
+        const stbl = find(find(find(trak, 'mdia'), 'minf'), 'stbl');
+        const stco = find(stbl, 'stco'), co64 = find(stbl, 'co64');
+        if (stco) {
+          for (let i = 0, n = dv.getUint32(stco.body + 4); i < n; i++) {
+            const p = stco.body + 8 + 4 * i, v = dv.getUint32(p) + moovBox.size;
+            if (v > 0xFFFFFFFF) throw new Error('File too large to move its header.');
+            dv.setUint32(p, v);
+          }
+        }
+        if (co64) {
+          for (let i = 0, n = dv.getUint32(co64.body + 4); i < n; i++) {
+            const p = co64.body + 8 + 8 * i;
+            dv.setBigUint64(p, dv.getBigUint64(p) + BigInt(moovBox.size));
+          }
+        }
+      }
+    }
+    const order = tops.filter((b) => b !== moovBox);
+    order.splice(moveFront ? (tops[0].type === 'ftyp' ? 1 : 0) : tops.indexOf(moovBox), 0, moovBox);
+    return new Blob(order.map((b) => (b === moovBox ? moov : blob.slice(b.off, b.off + b.size))), { type: 'video/mp4' });
+  }
+
+  const $ = (id) => document.getElementById(id);
+  let file = null, url = null;
+
+  function pick(f) {
+    if (!f) return;
+    file = f;
+    $('sm-name').textContent = f.name + ' (' + (f.size / 1048576).toFixed(1) + ' MB)';
+    $('sm-name').classList.remove('hidden');
+    $('sm-go').disabled = false;
+    $('sm-status').textContent = '';
+    $('sm-result').classList.add('hidden');
+  }
+
+  async function go() {
+    $('sm-go').disabled = true;
+    $('sm-status').textContent = 'Rewriting timing…';
+    const t0 = performance.now();
+    try {
+      const blob = await stretchVideo(file, parseInt($('sm-factor').value, 10));
+      if (url) URL.revokeObjectURL(url);
+      url = URL.createObjectURL(blob);
+      const base = file.name.replace(/\.[^.]+$/, '');
+      $('sm-preview').src = url;
+      $('sm-download').href = url;
+      $('sm-download').download = base + '_slowmo.mp4';
+      $('sm-result').classList.remove('hidden');
+      $('sm-status').textContent = 'Done in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s.';
+    } catch (err) {
+      console.error(err);
+      $('sm-status').textContent = 'Something went wrong: ' + (err && err.message ? err.message : err);
+    } finally {
+      $('sm-go').disabled = false;
+    }
+  }
+
+  $('sm-file').addEventListener('change', (e) => pick(e.target.files[0]));
+  ['dragover', 'dragenter'].forEach((t) => $('sm-drop').addEventListener(t, (e) => { e.preventDefault(); $('sm-drop').classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((t) => $('sm-drop').addEventListener(t, (e) => { e.preventDefault(); $('sm-drop').classList.remove('over'); }));
+  $('sm-drop').addEventListener('drop', (e) => pick(e.dataTransfer.files[0]));
+  $('sm-go').addEventListener('click', go);
 })();
 </script>
 </body>
